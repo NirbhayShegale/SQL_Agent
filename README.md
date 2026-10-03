@@ -1,1 +1,4 @@
 # SQL_Agent
+HF_TOKEN=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
+GROQ_API_KEY=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
+DATABASE_URL=postgresql+psycopg2://postgres:hyperdex450@db.pyuclmefmdygtiwcsnyt.supabase.co:5432/postgres

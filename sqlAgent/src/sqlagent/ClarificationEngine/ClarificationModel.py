@@ -2,7 +2,9 @@ from Config.LLm import ClarificationEngineLLM
 from sqlagent.ClarificationEngine.ClarificationPrompt import SYS_PROMPT_CLARIFICATION_ENGINE
 from pydantic import BaseModel, Field
 from typing import Optional, TYPE_CHECKING
-from langchain_core.messages import SystemMessage, HumanMessage
+from collections.abc import Sequence
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
+from langgraph.types import interrupt
 
 if TYPE_CHECKING:
     from Workflow.AgentState import AgentState
@@ -13,15 +15,15 @@ from pydantic import ValidationError
 
 class ClarificationOutput(BaseModel):
     is_clear: bool = Field(
-        ..., 
+        ...,
         description="True if the query is unambiguous and perfectly maps to the schema. False if it needs clarification."
     )
     reasoning: str = Field(
-        ..., 
+        ...,
         description="Internal thought process explaining exactly why the query is clear or ambiguous."
     )
     clarifying_question: Optional[str] = Field(
-        default=None, 
+        default=None,
         description="The exact question to ask the user if is_clear is False. Must be null if is_clear is True."
     )
 
@@ -34,11 +36,19 @@ class ClarificationOutput(BaseModel):
 def invoke_llm_with_retry(llm, messages):
     return llm.invoke(messages)
 
-def ClarificationEngine(prompt: str) -> ClarificationOutput:
+def ClarificationEngine(
+    prompt: str,
+    history: Sequence[AnyMessage] = (),
+) -> ClarificationOutput:
 
     messages = [
         SystemMessage(content=SYS_PROMPT_CLARIFICATION_ENGINE),
-        HumanMessage(content=f"Use the database schema to create a clarification query for the following question: {prompt}. You must return the output strictly in JSON format.")
+        *history,
+        HumanMessage(content=(
+            "Use the conversation history to understand follow-up references, but "
+            "evaluate the latest question as the current request: "
+            f"{prompt}\nReturn the output strictly in JSON format."
+        ))
     ]
 
     llm = ClarificationEngineLLM().with_structured_output(
@@ -46,24 +56,42 @@ def ClarificationEngine(prompt: str) -> ClarificationOutput:
         method="json_mode"
     )
 
-    try:
-        # Execute with Tenacity retry logic
-        response = invoke_llm_with_retry(llm, messages)
-        return response
-        
-    except Exception as e:        
-        return ClarificationOutput(
-            is_clear=False,
-            reasoning=f"The LLM completely failed to parse the output into valid JSON after multiple retries.\nerror{e}",
-            clarifying_question="I encountered an internal system error while analyzing your request. Could you please rephrase it?"
-        )
+    return invoke_llm_with_retry(llm, messages)
 
 
 def clarification_node(state: "AgentState"):
     prompt = state["user_prompt"]
-    result = ClarificationEngine(prompt)
+    result = ClarificationEngine(prompt, state.get("messages", []))
 
-    return {"clarification_result": result}
+    return {
+        "clarification_result": result.model_dump(),
+        "messages": [
+            HumanMessage(content=prompt),
+            AIMessage(
+                content=(
+                    result.clarifying_question
+                    if not result.is_clear and result.clarifying_question
+                    else "Your request is clear."
+                )
+            ),
+        ],
+    }
+
+
+def ask_human_node(state: "AgentState"):
+    clarification = state.get("clarification_result")
+    question = (
+        clarification.get("clarifying_question")
+        if clarification and clarification.get("clarifying_question")
+        else "Could you clarify your request?"
+    )
+    answer = interrupt({"question": question})
+    prompt = state["user_prompt"]
+
+    return {
+        "user_prompt": f"{prompt}\nUser clarification: {answer}",
+        "messages": [HumanMessage(content=str(answer))],
+    }
 
 
 # if __name__ == "__main__":

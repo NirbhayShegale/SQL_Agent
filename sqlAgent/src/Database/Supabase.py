@@ -18,3 +18,13 @@ def QueryExecuter():
 
         for row in result:
             print(row)
+
+# def execute_sql_query(sql_query: str) -> str:
+#     with engine.begin() as connection:
+#         result = connection.execute(text(sql_query))
+#         if result.returns_rows:
+#             return json.dumps(
+#                 [dict(row) for row in result.mappings().all()],
+#                 default=str,
+#             )
+#         return json.dumps({"rows_affected": result.rowcount})

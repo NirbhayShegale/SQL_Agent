@@ -2,6 +2,7 @@ from Config.LLm import QueryWriterLLM
 from sqlagent.QueryWriter.QueryWriterPrompt import SYS_PROMPT_QUERY_WRITER
 from pydantic import BaseModel, Field
 from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 if TYPE_CHECKING:
     from Workflow.AgentState import AgentState
@@ -9,7 +10,7 @@ if TYPE_CHECKING:
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
 from pydantic import ValidationError
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 
 class SQLQuery(BaseModel):
     query: str = Field(
@@ -25,11 +26,16 @@ class SQLQuery(BaseModel):
 def invoke_llm_with_retry(llm, messages):
     return llm.invoke(messages)
 
-def QueryWriter(prompt: str) -> SQLQuery:
+def QueryWriter(prompt: str, history: Sequence[AnyMessage] = ()) -> SQLQuery:
 
     messages = [
         SystemMessage(content=SYS_PROMPT_QUERY_WRITER),
-        HumanMessage(content=f"Use the database schema to create a SQL query for the following question: {prompt}. You must return the output strictly in JSON format.")
+        *history,
+        HumanMessage(content=(
+            "Use the conversation history as context for follow-up references, but treat "
+            "the latest question as the request to answer. Generate a SQL query for: "
+            f"{prompt}\nReturn the output strictly in JSON format."
+        ))
     ]
     llm = QueryWriterLLM().with_structured_output(
         SQLQuery,
@@ -38,12 +44,18 @@ def QueryWriter(prompt: str) -> SQLQuery:
 
     response = invoke_llm_with_retry(llm, messages)
     return response
-    
+
 def sql_generation_node(state: "AgentState"):
     prompt = state["user_prompt"]
-    result = QueryWriter(prompt)
-    
-    return {"sql_query": result}
+    result = QueryWriter(prompt, state.get("messages", []))
+
+    return {
+        "sql_query": result.query,
+        "messages": [
+            HumanMessage(content=prompt),
+            AIMessage(content=result.model_dump_json()),
+        ],
+    }
 
 
 # if __name__ == "__main__":

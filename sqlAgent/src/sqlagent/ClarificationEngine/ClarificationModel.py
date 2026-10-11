@@ -1,14 +1,11 @@
 from Config.LLm import ClarificationEngineLLM
 from sqlagent.ClarificationEngine.ClarificationPrompt import SYS_PROMPT_CLARIFICATION_ENGINE
 from pydantic import BaseModel, Field
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 from collections.abc import Sequence
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langgraph.types import interrupt
-
-if TYPE_CHECKING:
-    from Workflow.AgentState import AgentState
-
+from Workflow.AgentState import AgentState
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from langchain_core.exceptions import OutputParserException
 from pydantic import ValidationError
@@ -36,10 +33,7 @@ class ClarificationOutput(BaseModel):
 def invoke_llm_with_retry(llm, messages):
     return llm.invoke(messages)
 
-def ClarificationEngine(
-    prompt: str,
-    history: Sequence[AnyMessage] = (),
-) -> ClarificationOutput:
+def ClarificationEngine(prompt: str, history: Sequence[AnyMessage] = ()) -> ClarificationOutput:
 
     messages = [
         SystemMessage(content=SYS_PROMPT_CLARIFICATION_ENGINE),

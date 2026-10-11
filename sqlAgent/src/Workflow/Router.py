@@ -9,7 +9,7 @@ def route_after_clarification(state: AgentState) -> str:
     if not clarification_result:
         return "ask_human_node"
 
-    if clarification_result.get("is_clear"):
+    if clarification_result.get("is_clear")==True:
         return "generate_sql_node"
     else:
         return "ask_human_node"

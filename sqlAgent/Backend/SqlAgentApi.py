@@ -10,6 +10,7 @@ if str(src_path) not in sys.path:
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
+from langgraph.types import Command
 from Workflow.Graph import agent_app
 
 app = FastAPI(title="Text-to-SQL Agent API", version="1.0.0")
@@ -28,6 +29,11 @@ class UserQuery(BaseModel):
     thread_id: Optional[str] = None
 
 
+class ResumeQuery(BaseModel):
+    thread_id: str
+    clarification_query: Optional[str] = None
+
+
 @app.post("/query/")
 def create_item(query: UserQuery):
     try:
@@ -38,19 +44,56 @@ def create_item(query: UserQuery):
             config={"configurable": {"thread_id": thread_id}}
         )
 
+        if "__interrupt__" in result:
+            return {
+                "status": "awaiting_approval",
+                "thread_id": thread_id,
+                "review": result["__interrupt__"][0].value
+            }
+
         sql_obj = result.get("sql_query")
         sql_query_text = sql_obj.query if hasattr(sql_obj, "query") else (str(sql_obj) if sql_obj else None)
 
-        clarification_obj = result.get("clarification_result")
-        clarification_data = clarification_obj.model_dump() if hasattr(clarification_obj, "model_dump") else clarification_obj
-
         return {
+            "status": "completed",
             "thread_id": thread_id,
-            "sql_query": sql_query_text,
-            "clarification": clarification_data
+            "sql_query": sql_query_text
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/resume/")
+def resume_item(resume_data: ResumeQuery):
+    try:
+        thread_id = resume_data.thread_id
+        clarification_query = resume_data.clarification_query
+        if not clarification_query:
+            raise HTTPException(status_code=400, detail="Clarification is required.")
+
+        result = agent_app.invoke(
+            Command(resume=clarification_query),
+            config={"configurable": {"thread_id": thread_id}}
+        )
+
+        if "__interrupt__" in result:
+            return {
+                "status": "awaiting_approval",
+                "thread_id": thread_id,
+                "review": result["__interrupt__"][0].value
+            }
+
+        sql_obj = result.get("sql_query")
+        sql_query_text = sql_obj.query if hasattr(sql_obj, "query") else (str(sql_obj) if sql_obj else None)
+
+        return {
+            "status": "completed",
+            "thread_id": thread_id,
+            "sql_query": sql_query_text
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Run the FastAPI application:
-# uvicorn Backend.SqlAgentApi:app --reload --host 127.0.0.1 --port 8000
+# .\.venv\Scripts\uvicorn Backend.SqlAgentApi:app --reload --host 127.0.0.1 --port 8000
